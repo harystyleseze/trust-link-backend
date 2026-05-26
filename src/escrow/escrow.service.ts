@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -8,8 +9,14 @@ import {
 } from '@nestjs/common';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EscrowRecord } from '../prisma/prisma.service';
+import { EscrowResponseDto } from './dto/escrow-response.dto';
+import { EscrowSummaryDto } from './dto/escrow-summary.dto';
 import { CreateEscrowDto } from './dto/create-escrow.dto';
 import { EscrowRepository } from './escrow.repository';
+
+export type EscrowWithPaymentUrl = EscrowRecord & {
+  paymentUrl: string;
+};
 
 @Injectable()
 export class EscrowService {
@@ -23,28 +30,25 @@ export class EscrowService {
   async createEscrow(
     dto: CreateEscrowDto,
     vendorAddress: string,
-  ): Promise<EscrowRecord> {
-    try {
-      // Validate that buyer and vendor are different
-      if (dto.buyerAddress === vendorAddress) {
-        throw new BadRequestException('Buyer and vendor addresses cannot be the same');
-      }
-
-      this.logger.log(`Creating escrow for item: ${dto.itemName}, amount: ${dto.amount} ${dto.currency}`);
-      
-      const escrow = await this.escrowRepository.create(dto, vendorAddress);
-      
-      // Notify asynchronously to avoid blocking the response
-      this.notificationsService.notifyFunded(escrow).catch(error => {
-        this.logger.error(`Failed to send funded notification for escrow ${escrow.id}`, error);
-      });
-      
-      this.logger.log(`Escrow created successfully with ID: ${escrow.id}`);
-      return escrow;
-    } catch (error) {
-      this.logger.error(`Failed to create escrow: ${error.message}`, error);
-      throw error;
+  ): Promise<EscrowWithPaymentUrl> {
+    if (dto.amount <= 0) {
+      throw new BadRequestException('Amount must be positive');
     }
+
+    const existing = await this.escrowRepository.findByVendorAndItem(
+      vendorAddress,
+      dto.itemRef,
+    );
+    if (existing) {
+      throw new ConflictException('Duplicate escrow for this item reference');
+    }
+
+    const escrow = await this.escrowRepository.create(dto, vendorAddress);
+    await this.notificationsService.notifyFunded(escrow);
+    return {
+      ...escrow,
+      paymentUrl: this.buildPaymentUrl(escrow.id),
+    };
   }
 
   async findById(id: string): Promise<EscrowRecord> {
@@ -62,6 +66,81 @@ export class EscrowService {
       this.logger.error(`Error finding escrow ${id}: ${error.message}`, error);
       throw new BadRequestException('Failed to retrieve escrow');
     }
+  }
+
+  async getPublicEscrow(id: string): Promise<EscrowResponseDto> {
+    const escrow = await this.findById(id);
+    return this.toPublicEscrow(escrow);
+  }
+
+  async findVendorEscrows(
+    vendorAddress: string,
+    query: {
+      state?: string;
+      sort?: 'date' | 'amount';
+      order?: 'asc' | 'desc';
+      page?: number;
+      limit?: number;
+    },
+  ): Promise<{
+    data: EscrowSummaryDto[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    const sort = query.sort ?? 'date';
+    const order = query.order ?? 'desc';
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const { data, total } = await this.escrowRepository.findVendorEscrows(
+      vendorAddress,
+      query.state,
+      sort,
+      order,
+      page,
+      limit,
+    );
+
+    return {
+      data: data.map((escrow) => this.toSummary(escrow)),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  private toPublicEscrow(escrow: EscrowRecord) {
+    return {
+      id: escrow.id,
+      itemName: escrow.itemName,
+      itemRef: escrow.itemRef,
+      amount: escrow.amount,
+      currency: escrow.currency,
+      state: escrow.state,
+      trackingId: escrow.trackingId,
+      shippedAt: escrow.shippedAt,
+      createdAt: escrow.createdAt,
+      updatedAt: escrow.updatedAt,
+    };
+  }
+
+  private toSummary(escrow: EscrowRecord) {
+    return {
+      id: escrow.id,
+      itemName: escrow.itemName,
+      itemRef: escrow.itemRef,
+      amount: escrow.amount,
+      currency: escrow.currency,
+      state: escrow.state,
+      trackingId: escrow.trackingId,
+      createdAt: escrow.createdAt,
+      updatedAt: escrow.updatedAt,
+    };
+  }
+
+  private buildPaymentUrl(id: string): string {
+    return `https://trust-link.local/pay/${id}`;
   }
 
   async handleShipment(

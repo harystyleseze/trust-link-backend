@@ -18,10 +18,12 @@ export class CreateEscrowDto {
   @Transform(({ value }) => value?.trim())
   itemName!: string;
 
-  @IsNumber({}, { message: 'Amount must be a valid number' })
-  @IsPositive({ message: 'Amount must be positive' })
-  @Min(0.0000001, { message: 'Amount must be at least 0.0000001' })
-  @Max(1000000, { message: 'Amount must not exceed 1,000,000' })
+  @IsString()
+  @MinLength(3)
+  itemRef!: string;
+
+  @IsNumber()
+  @IsPositive()
   amount!: number;
 
   @IsString()

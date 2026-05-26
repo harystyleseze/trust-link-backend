@@ -19,7 +19,6 @@ import { EscrowService } from './escrow.service';
 import { RateLimit } from '../common/decorators/rate-limit.decorator';
 
 @Controller('escrow')
-@UseGuards(JwtGuard)
 export class EscrowController {
   constructor(private readonly escrowService: EscrowService) {}
 
