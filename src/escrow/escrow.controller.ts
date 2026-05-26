@@ -1,8 +1,17 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/auth-user';
 import { JwtGuard } from '../auth/guards/jwt.guard';
 import { CreateEscrowDto } from './dto/create-escrow.dto';
+import { UpdateShipmentDto } from './dto/update-shipment.dto';
 import { EscrowService } from './escrow.service';
 
 @Controller('escrow')
@@ -18,5 +27,14 @@ export class EscrowController {
   @Get(':id')
   getEscrow(@Param('id') id: string) {
     return this.escrowService.findById(id);
+  }
+
+  @Patch(':id/ship')
+  shipEscrow(
+    @Param('id') id: string,
+    @Body() dto: UpdateShipmentDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.escrowService.handleShipment(id, user.address, dto.trackingId);
   }
 }

@@ -1,6 +1,12 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 
-export type EscrowState = 'FUNDED' | 'SHIPPED' | 'DELIVERED' | 'RELEASED';
+export type EscrowState =
+  | 'FUNDED'
+  | 'SHIPPED'
+  | 'DELIVERED'
+  | 'RELEASED'
+  | 'COMPLETED'
+  | 'REFUNDED';
 export type NotificationChannel = 'EMAIL' | 'SMS';
 export type NotificationType = 'FUNDED' | 'SHIPPED';
 
@@ -13,6 +19,7 @@ export interface EscrowRecord {
   vendorAddress: string;
   state: EscrowState;
   trackingId: string | null;
+  shippedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -29,11 +36,21 @@ export interface NotificationRecord {
 
 type EscrowCreateInput = Omit<
   EscrowRecord,
-  'id' | 'state' | 'trackingId' | 'createdAt' | 'updatedAt'
+  'id' | 'state' | 'trackingId' | 'shippedAt' | 'createdAt' | 'updatedAt'
 > & {
   state?: EscrowState;
   trackingId?: string | null;
+  shippedAt?: Date | null;
 };
+
+type EscrowUpdateInput = Partial<
+  Pick<EscrowRecord, 'state' | 'trackingId' | 'shippedAt'>
+>;
+
+interface EscrowWhereInput {
+  state?: EscrowState;
+  shippedAt?: { lte: Date };
+}
 
 @Injectable()
 export class PrismaService implements OnModuleDestroy {
@@ -50,6 +67,7 @@ export class PrismaService implements OnModuleDestroy {
         id: String(this.escrowId++),
         state: data.state ?? 'FUNDED',
         trackingId: data.trackingId ?? null,
+        shippedAt: data.shippedAt ?? null,
         createdAt: now,
         updatedAt: now,
       };
@@ -64,12 +82,30 @@ export class PrismaService implements OnModuleDestroy {
       const escrow = this.escrows.get(where.id);
       return Promise.resolve(escrow ? { ...escrow } : null);
     },
+    findMany: ({
+      where,
+    }: {
+      where?: EscrowWhereInput;
+    } = {}): Promise<EscrowRecord[]> => {
+      let results = [...this.escrows.values()];
+      if (where?.state) {
+        results = results.filter((e) => e.state === where.state);
+      }
+      if (where?.shippedAt?.lte) {
+        const lte = where.shippedAt.lte;
+        results = results.filter(
+          (e) => e.shippedAt !== null && e.shippedAt <= lte,
+        );
+      }
+      return Promise.resolve(results.map((e) => ({ ...e })));
+    },
+
     update: ({
       where,
       data,
     }: {
       where: { id: string };
-      data: Partial<Pick<EscrowRecord, 'state' | 'trackingId'>>;
+      data: EscrowUpdateInput;
     }): Promise<EscrowRecord> => {
       const existing = this.escrows.get(where.id);
       if (!existing) {
